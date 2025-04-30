@@ -1,0 +1,8 @@
+duckdb
+pandas
+numpy
+boto3
+loguru
+openpyxl
+requests
+pyarrow
