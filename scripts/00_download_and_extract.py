@@ -1,7 +1,7 @@
-# === Script 00 - Téléchargement et extraction ZIP (propre et compatible Airflow/MinIO) ===
-# Ce script télécharge une archive ZIP, extrait les fichiers Excel dans 'data/inputs/',
-# les renomme de façon sécurisée, et valide leur présence.
-# Compatible avec l'exécution en local comme dans Airflow.
+# === Script 00 - Téléchargement et extraction ZIP (Airflow-compatible) ===
+# Ce script télécharge une archive ZIP depuis une URL,
+# extrait les fichiers Excel dans 'data/inputs/', les renomme de manière sécurisée
+# (ASCII-safe), puis vérifie leur présence pour garantir la suite du pipeline.
 
 import os
 import sys
@@ -14,14 +14,11 @@ from pathlib import Path
 from loguru import logger
 
 # ==============================================================================
-# 🔧 Initialisation des chemins et logs
+# 🔧 Configuration des chemins de logs
 # ==============================================================================
-AIRFLOW_LOG_PATH = os.getenv("AIRFLOW_LOG_PATH", "logs")  # Défaut pour exécution locale
+AIRFLOW_LOG_PATH = os.getenv("AIRFLOW_LOG_PATH", "logs")
 LOGS_PATH = Path(AIRFLOW_LOG_PATH)
 LOGS_PATH.mkdir(parents=True, exist_ok=True)
-
-INPUTS_PATH = Path("data/inputs")
-INPUTS_PATH.mkdir(parents=True, exist_ok=True)
 
 LOG_FILE = LOGS_PATH / "download_extract.log"
 logger.remove()
@@ -29,11 +26,16 @@ logger.add(sys.stdout, level="INFO")
 logger.add(LOG_FILE, level="INFO", rotation="500 KB")
 
 # ==============================================================================
-# 🔗 Paramètres du téléchargement
+# 📁 Chemin de destination des fichiers extraits
+# ==============================================================================
+INPUTS_PATH = Path("/opt/airflow/data/inputs")
+INPUTS_PATH.mkdir(parents=True, exist_ok=True)
+
+# ==============================================================================
+# 🌐 Paramètres de l'archive à télécharger
 # ==============================================================================
 ZIP_URL = (
-    "https://s3.eu-west-1.amazonaws.com/course.oc-static.com/projects/922_Data+Engineer/"
-    "922_P10/bottleneck.zip"
+    "https://s3.eu-west-1.amazonaws.com/course.oc-static.com/projects/922_Data+Engineer/922_P10/bottleneck.zip"
 )
 
 EXPECTED_FILES = [
@@ -43,32 +45,32 @@ EXPECTED_FILES = [
 ]
 
 # ==============================================================================
-# 🔣 Fonction : normalisation ASCII sécurisée des noms de fichiers
+# 🔤 Normalisation ASCII sécurisée des noms de fichiers
 # ==============================================================================
 def normalize_filename(filename: str) -> str:
-    nfkd_form = unicodedata.normalize("NFKD", filename)
-    only_ascii = nfkd_form.encode("ASCII", "ignore").decode("ASCII")
-    return re.sub(r"[^A-Za-z0-9_.-]", "_", only_ascii)
+    nfkd = unicodedata.normalize("NFKD", filename)
+    ascii_name = nfkd.encode("ASCII", "ignore").decode("ASCII")
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", ascii_name)
 
 # ==============================================================================
-# 📥 Fonction : téléchargement de l'archive ZIP
+# 📥 Téléchargement de l'archive ZIP
 # ==============================================================================
 def download_zip(url: str) -> bytes:
-    logger.info(f"📦 Téléchargement de l'archive depuis : {url}")
+    logger.info(f"📦 Téléchargement de l'archive : {url}")
     try:
         response = requests.get(url)
         response.raise_for_status()
         logger.success("✅ Archive ZIP téléchargée avec succès.")
         return response.content
     except Exception as e:
-        logger.error(f"❌ Erreur lors du téléchargement : {e}")
-        sys.exit(1)
+        logger.error(f"❌ Erreur pendant le téléchargement : {e}")
+        raise
 
 # ==============================================================================
-# 📂 Fonction : extraction et normalisation des fichiers dans data/inputs
+# 📂 Extraction et renommage sécurisé des fichiers
 # ==============================================================================
 def extract_and_normalize(zip_content: bytes, output_dir: Path) -> list:
-    logger.info("📂 Début de l'extraction et de la normalisation des fichiers...")
+    logger.info("📂 Début de l'extraction et du renommage des fichiers...")
     extracted_files = []
 
     try:
@@ -81,20 +83,21 @@ def extract_and_normalize(zip_content: bytes, output_dir: Path) -> list:
                 safe_name = normalize_filename(original_name)
                 target_path = output_dir / safe_name
 
-                with open(target_path, "wb") as f_out:
-                    f_out.write(zip_ref.read(member))
+                with open(target_path, "wb") as f:
+                    f.write(zip_ref.read(member))
 
                 extracted_files.append(safe_name)
                 logger.info(f"✅ Fichier extrait : {safe_name}")
 
-        logger.success(f"📁 Extraction terminée vers : {output_dir.resolve()}")
+        logger.success(f"📁 Extraction terminée dans : {output_dir.resolve()}")
         return extracted_files
+
     except Exception as e:
         logger.error(f"❌ Erreur pendant l'extraction : {e}")
-        sys.exit(1)
+        raise
 
 # ==============================================================================
-# ✅ Fonction : validation des fichiers extraits
+# ✅ Validation des fichiers extraits
 # ==============================================================================
 def validate_files(expected: list, actual: list, base_dir: Path):
     expected_normalized = [normalize_filename(f) for f in expected]
@@ -102,23 +105,30 @@ def validate_files(expected: list, actual: list, base_dir: Path):
 
     if missing:
         logger.error(f"❌ Fichiers manquants après extraction : {missing}")
-        sys.exit(1)
+        raise FileNotFoundError(f"Fichiers attendus manquants : {missing}")
 
     logger.success("🎯 Tous les fichiers attendus sont présents :")
     for f in expected_normalized:
         logger.info(f"   - {f}")
 
 # ==============================================================================
-# 🚀 Point d'entrée principal
+# 🚀 Point d’entrée principal
 # ==============================================================================
 def main():
     zip_bytes = download_zip(ZIP_URL)
     extracted = extract_and_normalize(zip_bytes, INPUTS_PATH)
     validate_files(EXPECTED_FILES, extracted, INPUTS_PATH)
-    logger.success("🎉 Téléchargement, extraction et validation complétés sans erreur.")
+    logger.success("🎉 Téléchargement, extraction et validation terminés avec succès.")
+    return 0
 
 # ==============================================================================
 # 📌 Lancement
 # ==============================================================================
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+        print("✔️ Script terminé avec succès.")
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"💥 Erreur inattendue : {e}")
+        sys.exit(1)

@@ -1,6 +1,6 @@
-# === Script 03 - Vérification présence fichiers dans MinIO (robuste, Airflow-compatible) ===
-# Ce script vérifie que tous les fichiers CSV attendus sont bien présents
-# dans le bucket MinIO après l’upload initial.
+# === Script 03 - Vérification de la présence des fichiers dans MinIO ===
+# Ce script vérifie que les fichiers CSV attendus (erp, web, liaison)
+# sont bien présents dans le bucket MinIO après l’upload initial.
 
 import os
 import sys
@@ -10,11 +10,11 @@ from loguru import logger
 import boto3
 from botocore.exceptions import ClientError
 
-# ==============================================================================
-# 🔧 Initialisation des chemins et logs
-# ==============================================================================
 warnings.filterwarnings("ignore")
 
+# ==============================================================================
+# 🔧 Initialisation des logs
+# ==============================================================================
 AIRFLOW_LOG_PATH = os.getenv("AIRFLOW_LOG_PATH", "logs")
 LOGS_PATH = Path(AIRFLOW_LOG_PATH)
 LOGS_PATH.mkdir(parents=True, exist_ok=True)
@@ -25,20 +25,27 @@ logger.add(sys.stdout, level="INFO")
 logger.add(LOG_FILE, level="INFO", rotation="500 KB")
 
 # ==============================================================================
-# ☁️ Paramètres MinIO
+# ☁️ Configuration MinIO
 # ==============================================================================
-MINIO_ENDPOINT = "http://host.docker.internal:9000"
-ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"
-SECRET_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-BUCKET_NAME = "bottleneck"
-PREFIX = "data/inputs/"
+MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://minio:9000")
+ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "admin")
+SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "admin1234")
+BUCKET_NAME = os.getenv("MINIO_BUCKET_NAME", "bottleneck")
+DESTINATION_PREFIX = os.getenv("MINIO_DESTINATION_PREFIX", "data/inputs/")
+
+EXPECTED_FILES = {
+    f"{DESTINATION_PREFIX}erp.csv",
+    f"{DESTINATION_PREFIX}web.csv",
+    f"{DESTINATION_PREFIX}liaison.csv",
+}
 
 # ==============================================================================
-# ⚙️ Fonction principale de vérification
+# 🔎 Fonction de vérification
 # ==============================================================================
 def verify_minio_upload():
-    logger.info("🔍 Vérification des fichiers présents dans MinIO...")
+    logger.info("🔍 Démarrage de la vérification des fichiers dans MinIO...")
 
+    # Connexion MinIO
     try:
         s3_client = boto3.client(
             "s3",
@@ -49,9 +56,10 @@ def verify_minio_upload():
         )
         logger.success("✅ Connexion à MinIO réussie.")
     except Exception as e:
-        logger.error(f"❌ Connexion échouée : {e}")
+        logger.error(f"❌ Connexion à MinIO échouée : {e}")
         sys.exit(1)
 
+    # Vérification de l'existence du bucket
     try:
         s3_client.head_bucket(Bucket=BUCKET_NAME)
         logger.success(f"✅ Bucket '{BUCKET_NAME}' accessible.")
@@ -59,22 +67,21 @@ def verify_minio_upload():
         logger.error(f"❌ Bucket inaccessible : {e}")
         sys.exit(1)
 
+    # Listing et contrôle des fichiers
     try:
-        response = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix=PREFIX)
-        contents = response.get('Contents', [])
+        response = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix=DESTINATION_PREFIX)
+        contents = response.get("Contents", [])
 
         if not contents:
-            logger.error(f"❌ Aucun fichier trouvé dans {BUCKET_NAME}/{PREFIX}.")
+            logger.error(f"❌ Aucun fichier trouvé dans {BUCKET_NAME}/{DESTINATION_PREFIX}")
             sys.exit(1)
 
-        logger.info(f"📄 Fichiers trouvés : {len(contents)}")
-        for obj in contents:
-            logger.info(f"   - {obj['Key']} ({obj['Size']} octets)")
+        found_files = {obj["Key"] for obj in contents}
+        logger.info(f"📦 Fichiers trouvés : {len(found_files)}")
+        for f in found_files:
+            logger.info(f"   - {f}")
 
-        expected_files = {f"{PREFIX}erp.csv", f"{PREFIX}web.csv", f"{PREFIX}liaison.csv"}
-        found_files = {obj['Key'] for obj in contents}
-
-        missing = expected_files - found_files
+        missing = EXPECTED_FILES - found_files
         if missing:
             logger.error(f"❌ Fichiers manquants : {missing}")
             sys.exit(1)
@@ -86,7 +93,12 @@ def verify_minio_upload():
         sys.exit(1)
 
 # ==============================================================================
-# 📌 Lancement direct
+# 🚀 Point d’entrée
 # ==============================================================================
 if __name__ == "__main__":
-    verify_minio_upload()
+    try:
+        verify_minio_upload()
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"❌ Erreur inattendue : {e}")
+        sys.exit(1)

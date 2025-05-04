@@ -1,20 +1,20 @@
 # ============================================================================
-# 📦 Docker Compose - Projet BottleNeck avec Apache Airflow, MinIO, PostgreSQL
-# Architecture professionnelle avec exécution Celery + Monitoring Flower
+# 📦 Docker Compose - Projet BottleNeck (Airflow + MinIO + PostgreSQL + Redis)
+# Architecture professionnelle avec CeleryExecutor, Flower, volumes et .env
 # ============================================================================
 
-# (version supprimée car dépréciée)
+# ℹ️ Version supprimée car obsolète avec Docker Compose v2+
 
 # ============================================================================
-# 🗃️ Volumes persistants
+# 🗃️ Volumes persistants (données PostgreSQL, logs Airflow, stockage MinIO)
 # ============================================================================
 volumes:
-  postgres-data:         # Données PostgreSQL (backend Airflow)
-  airflow-logs:          # Logs Airflow
-  minio-data:            # Données MinIO (inputs, outputs, logs)
+  postgres-data:
+  airflow-logs:
+  minio-data:
 
 # ============================================================================
-# 🌐 Réseau interne
+# 🌐 Réseau interne pour communication inter-containers
 # ============================================================================
 networks:
   airflow_net:
@@ -26,14 +26,14 @@ networks:
 services:
 
   # --------------------------------------------------------------------------
-  # 🗄️ PostgreSQL - Base Airflow
+  # 📂 PostgreSQL - Base de données métadonnées Airflow
   # --------------------------------------------------------------------------
   postgres:
     image: postgres:13
     environment:
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
-      POSTGRES_DB: airflow
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
@@ -41,18 +41,18 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
-  # ☁️ MinIO - Stockage compatible S3
+  # ☁️ MinIO - Stockage objet compatible S3
   # --------------------------------------------------------------------------
   minio:
     image: minio/minio:latest
     container_name: minio
     command: server /data --address ":9000" --console-address ":9001"
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9000:9000"   # API MinIO (S3 compatible)
+      - "9001:9001"   # Interface web MinIO
     environment:
-      MINIO_ROOT_USER: admin
-      MINIO_ROOT_PASSWORD: admin1234
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes:
       - minio-data:/data
     networks:
@@ -60,7 +60,7 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
-  # 🔥 Redis - File d'attente Celery
+  # 🔥 Redis - File d'attente pour Celery
   # --------------------------------------------------------------------------
   redis:
     image: redis:latest
@@ -71,7 +71,7 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
-  # ✈️ Airflow Webserver
+  # ✈️ Airflow Webserver - Interface UI
   # --------------------------------------------------------------------------
   airflow-webserver:
     build:
@@ -85,13 +85,13 @@ services:
       - airflow-scheduler
     environment:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
       AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
-      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
-      AIRFLOW__CORE__FERNET_KEY: ''
-      AIRFLOW__WEBSERVER__SECRET_KEY: my_secret_key
-      _AIRFLOW_WWW_USER_USERNAME: admin
-      _AIRFLOW_WWW_USER_PASSWORD: admin
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_USER}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_PASSWORD}
     volumes:
       - ./dags:/opt/airflow/dags
       - ./scripts:/opt/airflow/scripts
@@ -105,7 +105,7 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
-  # ⏱️ Airflow Scheduler
+  # ⏱️ Airflow Scheduler - Planificateur de DAGs
   # --------------------------------------------------------------------------
   airflow-scheduler:
     build:
@@ -118,10 +118,10 @@ services:
       - redis
     environment:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
       AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
-      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
-      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
     volumes:
       - ./dags:/opt/airflow/dags
       - ./scripts:/opt/airflow/scripts
@@ -133,7 +133,7 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
-  # ⚙️ Airflow Worker
+  # ⚙️ Airflow Worker - Exécution des tâches en parallèle
   # --------------------------------------------------------------------------
   airflow-worker:
     build:
@@ -146,10 +146,10 @@ services:
       - redis
     environment:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
       AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
-      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
-      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
     volumes:
       - ./dags:/opt/airflow/dags
       - ./scripts:/opt/airflow/scripts
@@ -161,7 +161,7 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
-  # 📊 Flower - Monitoring Celery
+  # 📊 Flower - Monitoring Celery Workers
   # --------------------------------------------------------------------------
   flower:
     build:
@@ -174,9 +174,9 @@ services:
       - airflow-worker
     environment:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
       AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
-      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
     ports:
       - "5555:5555"
     networks:

@@ -1,6 +1,6 @@
 # === Script de test 08 - Validation des tables dédoublonnées ===
-# Ce script contrôle que les tables erp_dedup, web_dedup et liaison_dedup
-# existent bien dans DuckDB et contiennent un nombre de lignes > 0.
+# Ce script vérifie que les tables dédoublonnées (erp_dedup, web_dedup, liaison_dedup)
+# existent dans la base DuckDB, contiennent des données, et sont prêtes pour la fusion.
 
 import os
 import sys
@@ -24,36 +24,31 @@ logger.add(sys.stdout, level="INFO")
 logger.add(LOG_FILE, level="INFO", rotation="500 KB")
 
 # ==============================================================================
-# 📋 Fonction principale : test des tables dédoublonnées
+# 🧪 Fonction principale : validation de la présence des tables dédoublonnées
 # ==============================================================================
 def main():
     try:
-        con = duckdb.connect("data/bottleneck.duckdb")
-        logger.info("🧪 Connexion à DuckDB réussie.")
+        con = duckdb.connect("/opt/airflow/data/bottleneck.duckdb")
+        logger.info("🧪 Connexion à DuckDB établie.")
     except Exception as e:
-        logger.error(f"❌ Connexion échouée : {e}")
+        logger.error(f"❌ Erreur de connexion à DuckDB : {e}")
         sys.exit(1)
 
     try:
-        nb_erp = con.execute("SELECT COUNT(*) FROM erp_dedup").fetchone()[0]
-        nb_web = con.execute("SELECT COUNT(*) FROM web_dedup").fetchone()[0]
-        nb_liaison = con.execute("SELECT COUNT(*) FROM liaison_dedup").fetchone()[0]
+        # Validation de l'existence et du contenu des 3 tables dédoublonnées
+        for table_name in ["erp_dedup", "web_dedup", "liaison_dedup"]:
+            count = con.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+            assert count > 0, f"❌ La table {table_name} est vide ou n’a pas été créée."
+            logger.success(f"✅ {table_name} : {count} lignes présentes.")
 
-        assert nb_erp > 0, "❌ Table erp_dedup vide"
-        assert nb_web > 0, "❌ Table web_dedup vide"
-        assert nb_liaison > 0, "❌ Table liaison_dedup vide"
-
-        logger.success(f"✅ erp_dedup : {nb_erp} lignes")
-        logger.success(f"✅ web_dedup : {nb_web} lignes")
-        logger.success(f"✅ liaison_dedup : {nb_liaison} lignes")
-        logger.success("🎯 Test de création des tables dédoublonnées validé.")
+        logger.success("🎯 Toutes les tables dédoublonnées sont valides et prêtes à être utilisées.")
 
     except Exception as e:
-        logger.error(f"❌ Erreur dans le test de dédoublonnage : {e}")
+        logger.error(f"❌ Échec du test de dédoublonnage : {e}")
         sys.exit(1)
 
 # ==============================================================================
-# 🚀 Point d’entrée
+# 🚀 Lancement
 # ==============================================================================
 if __name__ == "__main__":
     main()

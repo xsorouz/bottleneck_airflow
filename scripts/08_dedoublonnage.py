@@ -1,6 +1,6 @@
 # === Script 08 - Dédoublonnage des fichiers nettoyés avec DuckDB ===
-# Ce script dédoublonne les tables nettoyées en supprimant les doublons
-# selon des règles spécifiques, et vérifie que les résultats sont corrects.
+# Ce script applique des règles de dédoublonnage spécifiques sur les fichiers nettoyés.
+# Il crée trois tables DuckDB (erp_dedup, web_dedup, liaison_dedup) et vérifie leur validité.
 
 import os
 import sys
@@ -9,9 +9,9 @@ from pathlib import Path
 import duckdb
 from loguru import logger
 
-# ============================================================================== 
-# 🔧 Initialisation des chemins et logs
-# ============================================================================== 
+# ==============================================================================
+# 🔧 Initialisation des logs
+# ==============================================================================
 warnings.filterwarnings("ignore")
 
 AIRFLOW_LOG_PATH = os.getenv("AIRFLOW_LOG_PATH", "logs")
@@ -23,21 +23,30 @@ logger.remove()
 logger.add(sys.stdout, level="INFO")
 logger.add(LOG_FILE, level="INFO", rotation="500 KB")
 
-# ============================================================================== 
-# 💼 Fonction principale : dédoublonnage
-# ============================================================================== 
+# ==============================================================================
+# 💼 Fonction principale
+# ==============================================================================
 def main():
+    # 📁 Définition des chemins
+    DUCKDB_PATH = Path("/opt/airflow/data/bottleneck.duckdb")
+    OUTPUTS_PATH = Path("/opt/airflow/data/outputs")
+    OUTPUTS_PATH.mkdir(parents=True, exist_ok=True)
+
+    if not DUCKDB_PATH.exists():
+        logger.error(f"❌ Base DuckDB introuvable à {DUCKDB_PATH}")
+        sys.exit(1)
+
+    # 🦆 Connexion à DuckDB
     try:
-        Path("data").mkdir(exist_ok=True)
-        con = duckdb.connect("data/bottleneck.duckdb")
-        logger.success("✅ Connexion à DuckDB établie dans 'data/bottleneck.duckdb'.")
+        con = duckdb.connect(str(DUCKDB_PATH))
+        logger.success(f"✅ Connexion à DuckDB : {DUCKDB_PATH}")
     except Exception as e:
-        logger.error(f"❌ Échec de connexion à DuckDB : {e}")
-        return
+        logger.error(f"❌ Erreur de connexion à DuckDB : {e}")
+        sys.exit(1)
 
     # 🧹 Dédoublonnage ERP
     try:
-        con.execute("""
+        con.execute(f"""
             CREATE OR REPLACE TABLE erp_dedup AS
             SELECT 
                 product_id,
@@ -45,49 +54,49 @@ def main():
                 MAX(price)          AS price,
                 MAX(stock_quantity) AS stock_quantity,
                 MAX(stock_status)   AS stock_status
-            FROM read_csv_auto('data/outputs/erp_clean.csv')
+            FROM read_csv_auto('{OUTPUTS_PATH}/erp_clean.csv')
             GROUP BY product_id
         """)
-        logger.success("✅ Table erp_dedup créée avec agrégation sur product_id.")
+        logger.success("✅ Table erp_dedup créée avec regroupement par product_id.")
     except Exception as e:
-        logger.error(f"❌ Erreur lors du dédoublonnage ERP : {e}")
-        return
+        logger.error(f"❌ Erreur de dédoublonnage ERP : {e}")
+        sys.exit(1)
 
     # 🔗 Dédoublonnage Liaison
     try:
-        con.execute("""
+        con.execute(f"""
             CREATE OR REPLACE TABLE liaison_dedup AS
             SELECT 
                 product_id,
                 MIN(id_web) AS id_web
-            FROM read_csv_auto('data/outputs/liaison_clean.csv')
+            FROM read_csv_auto('{OUTPUTS_PATH}/liaison_clean.csv')
             GROUP BY product_id
         """)
-        logger.success("✅ Table liaison_dedup créée avec agrégation sur product_id.")
+        logger.success("✅ Table liaison_dedup créée avec MIN(id_web) par product_id.")
     except Exception as e:
-        logger.error(f"❌ Erreur lors du dédoublonnage Liaison : {e}")
-        return
+        logger.error(f"❌ Erreur de dédoublonnage Liaison : {e}")
+        sys.exit(1)
 
     # 🌐 Dédoublonnage Web
     try:
-        con.execute("""
+        con.execute(f"""
             CREATE OR REPLACE TABLE web_dedup AS
             SELECT * FROM (
                 SELECT *, ROW_NUMBER() OVER (
                     PARTITION BY sku
                     ORDER BY post_date DESC
                 ) AS rn
-                FROM read_csv_auto('data/outputs/web_clean.csv')
+                FROM read_csv_auto('{OUTPUTS_PATH}/web_clean.csv')
                 WHERE post_type = 'product'
             )
             WHERE rn = 1
         """)
-        logger.success("✅ Table web_dedup créée avec filtrage post_type = 'product' et row_number.")
+        logger.success("✅ Table web_dedup créée avec filtre post_type='product' et ROW_NUMBER.")
     except Exception as e:
-        logger.error(f"❌ Erreur lors du dédoublonnage Web : {e}")
-        return
+        logger.error(f"❌ Erreur de dédoublonnage Web : {e}")
+        sys.exit(1)
 
-    # ✅ Validation
+    # ✅ Validation finale des données
     try:
         nb_erp = con.execute("SELECT COUNT(*) FROM erp_dedup").fetchone()[0]
         nb_web = con.execute("SELECT COUNT(*) FROM web_dedup").fetchone()[0]
@@ -100,11 +109,16 @@ def main():
         logger.info(f"✔️  Lignes dédoublonnées - ERP: {nb_erp}, Web: {nb_web}, Liaison: {nb_liaison}")
         logger.success("🎯 Dédoublonnage terminé avec succès et validé.")
     except Exception as e:
-        logger.error(f"❌ Échec dans la validation du dédoublonnage : {e}")
-        return
+        logger.error(f"❌ Validation des tables dédoublonnées échouée : {e}")
+        sys.exit(1)
 
-# ============================================================================== 
-# 🚀 Point d'entrée
-# ============================================================================== 
+# ==============================================================================
+# 🚀 Point d'entrée du script
+# ==============================================================================
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"❌ Erreur inattendue : {e}")
+        sys.exit(1)

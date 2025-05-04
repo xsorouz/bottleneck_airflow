@@ -1,0 +1,14 @@
+Étape,Résultat,Attendu
+Brut - ERP,825.0,
+Brut - Web,1513.0,
+Brut - Liaison,825.0,
+Nettoyé - ERP,823.0,
+Nettoyé - Web,1428.0,
+Nettoyé - Liaison,734.0,
+Dédoublonné - ERP,823.0,825
+Dédoublonné - Web,714.0,714
+Dédoublonné - Liaison,734.0,825
+Fusion finale,714.0,714
+Produits CA,573.0,573
+CA Total (€),387837.6,387837.60
+Vins Millésimés,30.0,30
