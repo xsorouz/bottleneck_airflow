@@ -1,5 +1,4 @@
 # ============================================================================
-# 📦 Dockerfile - Projet BottleNeck avec Apache Airflow
 # Basé sur l'image officielle Airflow avec Python 3.10
 # Ajoute les dépendances projet via un fichier requirements.txt
 # ============================================================================
